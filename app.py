@@ -742,3 +742,296 @@ if comparison:
                     )
         else:
             st.info("Il faut au moins deux équipes avec des données.")
+
+# ============================================================
+# BACKTESTING HISTORIQUE - PREMIER LEAGUE
+# Bloc indépendant : ne remplace aucune section existante
+# ============================================================
+
+import math
+
+st.divider()
+st.header("🧪 Backtesting historique")
+
+st.write(
+    "Le modèle estime les buts et les probabilités de résultat "
+    "en utilisant uniquement les matchs antérieurs à chaque rencontre testée."
+)
+
+if st.button("▶️ Lancer le backtesting Premier League", key="run_backtest_pl"):
+
+    token = st.secrets.get("FOOTBALL_DATA_TOKEN", "")
+
+    if not token:
+        st.error("Token API introuvable dans les Secrets.")
+
+    else:
+        today = datetime.now(timezone.utc).date()
+        date_from = today - timedelta(days=90)
+
+        params = urlencode({
+            "dateFrom": date_from.isoformat(),
+            "dateTo": (today + timedelta(days=1)).isoformat(),
+            "status": "FINISHED",
+        })
+
+        url = (
+            "https://api.football-data.org/v4/"
+            f"competitions/PL/matches?{params}"
+        )
+
+        request = Request(
+            url,
+            headers={"X-Auth-Token": token},
+        )
+
+        try:
+            with st.spinner("Récupération et test des matchs..."):
+                with urlopen(request, timeout=30) as response:
+                    data = json.loads(
+                        response.read().decode("utf-8")
+                    )
+
+            matches = []
+
+            for match in data.get("matches", []):
+                score = match.get("score", {}).get("fullTime", {})
+                hg = score.get("home")
+                ag = score.get("away")
+
+                if (
+                    match.get("status") == "FINISHED"
+                    and isinstance(hg, int)
+                    and isinstance(ag, int)
+                    and match.get("utcDate")
+                    and match.get("homeTeam", {}).get("name")
+                    and match.get("awayTeam", {}).get("name")
+                ):
+                    matches.append({
+                        "date": match["utcDate"],
+                        "home": match["homeTeam"]["name"],
+                        "away": match["awayTeam"]["name"],
+                        "hg": hg,
+                        "ag": ag,
+                    })
+
+            matches.sort(key=lambda m: m["date"])
+
+            # Statistiques cumulées uniquement des matchs déjà joués.
+            history = []
+            predictions = []
+
+            def poisson_probs(lam, max_goals=10):
+                lam = max(0.05, min(float(lam), 8.0))
+                probs = []
+                for goals in range(max_goals + 1):
+                    probs.append(
+                        math.exp(-lam) * lam ** goals
+                        / math.factorial(goals)
+                    )
+
+                total = sum(probs)
+                return [p / total for p in probs]
+
+            def estimate_goals(team, venue, prior, league_avg):
+                # venue = "home" ou "away"
+                scored = 0
+                conceded = 0
+                count = 0
+
+                for old in prior:
+                    if venue == "home" and old["home"] == team:
+                        scored += old["hg"]
+                        conceded += old["ag"]
+                        count += 1
+
+                    elif venue == "away" and old["away"] == team:
+                        scored += old["ag"]
+                        conceded += old["hg"]
+                        count += 1
+
+                # Lissage : équivalent à 3 matchs moyens ajoutés.
+                smoothed_scored = (
+                    scored + 3 * league_avg
+                ) / (count + 3)
+
+                smoothed_conceded = (
+                    conceded + 3 * league_avg
+                ) / (count + 3)
+
+                return smoothed_scored, smoothed_conceded, count
+
+            for match in matches:
+
+                # On attend d'avoir une base historique minimale.
+                if len(history) < 10:
+                    history.append(match)
+                    continue
+
+                home_avg = sum(m["hg"] for m in history) / len(history)
+                away_avg = sum(m["ag"] for m in history) / len(history)
+
+                if home_avg <= 0 or away_avg <= 0:
+                    history.append(match)
+                    continue
+
+                home_scored, home_conceded, home_n = estimate_goals(
+                    match["home"], "home", history, home_avg
+                )
+
+                away_scored, away_conceded, away_n = estimate_goals(
+                    match["away"], "away", history, away_avg
+                )
+
+                # Forces relatives à la moyenne de la compétition.
+                home_attack = home_scored / home_avg
+                away_defence = away_conceded / home_avg
+
+                away_attack = away_scored / away_avg
+                home_defence = home_conceded / away_avg
+
+                expected_home = home_avg * home_attack * away_defence
+                expected_away = away_avg * away_attack * home_defence
+
+                ph = poisson_probs(expected_home)
+                pa = poisson_probs(expected_away)
+
+                p_home = 0.0
+                p_draw = 0.0
+                p_away = 0.0
+
+                for i, pi in enumerate(ph):
+                    for j, pj in enumerate(pa):
+                        probability = pi * pj
+
+                        if i > j:
+                            p_home += probability
+                        elif i == j:
+                            p_draw += probability
+                        else:
+                            p_away += probability
+
+                probabilities = [p_home, p_draw, p_away]
+                labels = ["Domicile", "Nul", "Extérieur"]
+                predicted_result = labels[
+                    probabilities.index(max(probabilities))
+                ]
+
+                actual_result = (
+                    "Domicile" if match["hg"] > match["ag"]
+                    else "Extérieur" if match["hg"] < match["ag"]
+                    else "Nul"
+                )
+
+                predictions.append({
+                    "Date": match["date"][:10],
+                    "Domicile": match["home"],
+                    "Extérieur": match["away"],
+                    "Buts domicile estimés": round(expected_home, 2),
+                    "Buts extérieur estimés": round(expected_away, 2),
+                    "Score réel": f'{match["hg"]}-{match["ag"]}',
+                    "Résultat prédit": predicted_result,
+                    "Résultat réel": actual_result,
+                    "P victoire domicile (%)": round(p_home * 100, 1),
+                    "P nul (%)": round(p_draw * 100, 1),
+                    "P victoire extérieur (%)": round(p_away * 100, 1),
+                    "_eh": expected_home,
+                    "_ea": expected_away,
+                    "_probs": probabilities,
+                    "_home_goals": match["hg"],
+                    "_away_goals": match["ag"],
+                    "_actual_class": (
+                        0 if actual_result == "Domicile"
+                        else 1 if actual_result == "Nul"
+                        else 2
+                    ),
+                    "_home_n": home_n,
+                    "_away_n": away_n,
+                })
+
+                # IMPORTANT : le match entre dans l'historique
+                # seulement après la création de sa prédiction.
+                history.append(match)
+
+            st.session_state["backtest_pl_results"] = predictions
+
+            if predictions:
+                st.success(
+                    f"Test terminé : {len(predictions)} matchs évalués."
+                )
+            else:
+                st.warning(
+                    "Pas assez de matchs historiques exploitables "
+                    "pour lancer le test."
+                )
+
+        except HTTPError as error:
+            st.error(f"Erreur API HTTP {error.code}.")
+        except URLError:
+            st.error("Connexion à l'API impossible. Réessaie plus tard.")
+        except (ValueError, KeyError, TypeError, ZeroDivisionError):
+            st.error(
+                "Les données reçues n'ont pas pu être analysées."
+            )
+
+results = st.session_state.get("backtest_pl_results", [])
+
+if results:
+    st.subheader("📈 Résultats du test")
+
+    n = len(results)
+
+    mae = sum(
+        abs(r["_eh"] - r["_home_goals"])
+        + abs(r["_ea"] - r["_away_goals"])
+        for r in results
+    ) / (2 * n)
+
+    rmse = math.sqrt(
+        sum(
+            (r["_eh"] - r["_home_goals"]) ** 2
+            + (r["_ea"] - r["_away_goals"]) ** 2
+            for r in results
+        ) / (2 * n)
+    )
+
+    correct = sum(
+        r["Résultat prédit"] == r["Résultat réel"]
+        for r in results
+    )
+
+    brier = sum(
+        sum(
+            (r["_probs"][i] - (1 if i == r["_actual_class"] else 0)) ** 2
+            for i in range(3)
+        )
+        for r in results
+    ) / n
+
+    c1, c2 = st.columns(2)
+    c1.metric("Matchs testés", n)
+    c2.metric("Résultat exact prédit", f"{correct / n * 100:.1f}%")
+
+    c1, c2 = st.columns(2)
+    c1.metric("MAE des buts", f"{mae:.2f}")
+    c2.metric("RMSE des buts", f"{rmse:.2f}")
+
+    st.metric("Brier victoire/nul/défaite", f"{brier:.3f}")
+
+    st.caption(
+        "MAE et RMSE : erreurs moyennes sur les buts de chaque équipe. "
+        "Brier : qualité des trois probabilités, plus bas est préférable. "
+        "Ces résultats ne garantissent pas les performances futures."
+    )
+
+    # Présenter les colonnes utiles, sans les variables techniques.
+    display_results = [
+        {
+            key: value
+            for key, value in row.items()
+            if not key.startswith("_")
+        }
+        for row in results
+    ]
+
+    st.dataframe(display_results, use_container_width=True)
