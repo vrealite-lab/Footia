@@ -191,3 +191,118 @@ st.caption(
     "disponibles dépendent de ton offre API. Les scores et statuts "
     "ne garantissent pas une couverture en temps réel."
 )
+st.divider()
+st.header("📊 Analyse historique des buts")
+
+st.write(
+    "Calcule les moyennes à partir des matchs terminés "
+    "de la compétition sélectionnée."
+)
+
+if st.button("Calculer les moyennes historiques"):
+    token = st.secrets.get("FOOTBALL_DATA_TOKEN", "")
+
+    if not token:
+        st.error("Token API introuvable dans les Secrets.")
+    else:
+        today = datetime.now(timezone.utc).date()
+        date_from = today - timedelta(days=90)
+        date_to = today + timedelta(days=1)
+
+        code = competitions[competition_name]
+
+        params = urlencode({
+            "status": "FINISHED",
+            "dateFrom": date_from.isoformat(),
+            "dateTo": date_to.isoformat(),
+        })
+
+        url = (
+            f"https://api.football-data.org/v4/competitions/"
+            f"{code}/matches?{params}"
+        )
+
+        request = Request(
+            url,
+            headers={"X-Auth-Token": token},
+        )
+
+        try:
+            with st.spinner("Analyse des matchs terminés..."):
+                with urlopen(request, timeout=20) as response:
+                    data = json.loads(
+                        response.read().decode("utf-8")
+                    )
+
+            matches = data.get("matches", [])
+
+            finished_scores = []
+
+            for match in matches:
+                if match.get("status") != "FINISHED":
+                    continue
+
+                score = match.get("score", {}).get("fullTime", {})
+                home = score.get("home")
+                away = score.get("away")
+
+                if (
+                    isinstance(home, int)
+                    and isinstance(away, int)
+                ):
+                    finished_scores.append((home, away))
+
+            if not finished_scores:
+                st.warning(
+                    "Aucun score final exploitable trouvé "
+                    "sur cette période."
+                )
+            else:
+                count = len(finished_scores)
+
+                home_avg = sum(
+                    home for home, away in finished_scores
+                ) / count
+
+                away_avg = sum(
+                    away for home, away in finished_scores
+                ) / count
+
+                total_avg = home_avg + away_avg
+
+                st.success(
+                    f"Analyse basée sur {count} matchs terminés"
+                )
+
+                col1, col2, col3 = st.columns(3)
+
+                col1.metric(
+                    "Buts par match",
+                    f"{total_avg:.2f}",
+                )
+
+                col2.metric(
+                    "Buts domicile",
+                    f"{home_avg:.2f}",
+                )
+
+                col3.metric(
+                    "Buts extérieur",
+                    f"{away_avg:.2f}",
+                )
+
+                st.caption(
+                    "Période : 90 derniers jours environ. "
+                    "Ces moyennes décrivent les résultats passés ; "
+                    "elles ne prédisent pas à elles seules le prochain match."
+                )
+
+        except HTTPError as error:
+            st.error(
+                f"Erreur API HTTP {error.code}. "
+                "Vérifie les droits d'accès et réessaie."
+            )
+        except URLError:
+            st.error("Connexion à l'API impossible. Réessaie plus tard.")
+        except (ValueError, KeyError, TypeError):
+            st.error("Impossible de lire les données reçues.")
