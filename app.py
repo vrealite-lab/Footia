@@ -909,17 +909,17 @@ if st.button("▶️ Lancer le backtesting Premier League", key="run_backtest_pl
                         elif i == j:
                             p_draw += probability
                         else:
-                            p_away += probability
+                            p_away += probability    
                             
-# Modèle de référence : moyenne de la compétition
-baseline_home = home_avg
-baseline_away = away_avg
+                # Modèle de référence : moyenne de la compétition
+                baseline_home = home_avg
+                baseline_away = away_avg
 
-baseline_ph = poisson_probs(baseline_home)
-baseline_pa = poisson_probs(baseline_away)
+                baseline_ph = poisson_probs(baseline_home)
+                baseline_pa = poisson_probs(baseline_away)
 
-baseline_probs = [0.0, 0.0, 0.0]
-
+                baseline_probs = [0.0, 0.0, 0.0]
+                
 for i, pi in enumerate(baseline_ph):
     for j, pj in enumerate(baseline_pa):
         probability = pi * pj
