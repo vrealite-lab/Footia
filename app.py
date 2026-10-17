@@ -1,75 +1,154 @@
-import math
+import json
+from datetime import datetime, timedelta, timezone
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
+
 import streamlit as st
 
-st.set_page_config(page_title="Foot IA — Prototype", page_icon="⚽", layout="centered")
+st.set_page_config(page_title="Foot IA", page_icon="⚽", layout="centered")
 
-st.title("⚽ Foot IA — Analyseur de match")
-st.caption("Prototype gratuit • Mode démonstration — aucune donnée en direct")
+st.title("⚽ Foot IA")
+st.caption("Tableau de bord football connecté à football-data.org")
 
-st.warning(
-    "Les valeurs ci-dessous sont des exemples modifiables, pas des statistiques réelles. "
-    "Ce prototype ne fournit pas de conseil de pari ni de garantie de résultat."
+competitions = {
+    "Ligue 1 — France": "FL1",
+    "Premier League — Angleterre": "PL",
+    "Liga — Espagne": "PD",
+    "Bundesliga — Allemagne": "BL1",
+    "Serie A — Italie": "SA",
+}
+
+competition_name = st.selectbox(
+    "Choisis une compétition",
+    list(competitions.keys()),
 )
 
-st.subheader("1. Renseigne les données du match")
-col1, col2 = st.columns(2)
-with col1:
-    home = st.text_input("Équipe à domicile", "Équipe A")
-    home_goals = st.number_input("Buts domicile", min_value=0, max_value=20, value=1, step=1)
-    home_shots = st.slider("Tirs domicile (exemple)", 0, 30, 7)
-    home_sot = st.slider("Tirs cadrés domicile (exemple)", 0, 15, 3)
-with col2:
-    away = st.text_input("Équipe à l'extérieur", "Équipe B")
-    away_goals = st.number_input("Buts extérieur", min_value=0, max_value=20, value=0, step=1)
-    away_shots = st.slider("Tirs extérieur (exemple)", 0, 30, 4)
-    away_sot = st.slider("Tirs cadrés extérieur (exemple)", 0, 15, 1)
+if st.button("🔄 Charger les matchs", use_container_width=True):
+    st.session_state["load_matches"] = True
 
-minute = st.slider("Minute du match", 1, 90, 35)
-st.caption("Pour ce premier prototype, les probabilités reposent sur des hypothèses simplifiées et des paramètres que tu saisis.")
+if st.session_state.get("load_matches", False):
+    token = st.secrets.get("FOOTBALL_DATA_TOKEN", "")
 
-st.subheader("2. Estimation simplifiée des buts restants")
-st.write(
-    "Le calcul ci-dessous utilise un modèle de Poisson très simplifié. "
-    "Il sert à apprendre et à tester l'interface, pas à prédire fiablement un vrai match."
+    if not token:
+        st.error(
+            "Token introuvable. Vérifie les Secrets dans "
+            "les paramètres de ton application Streamlit."
+        )
+    else:
+        today = datetime.now(timezone.utc).date()
+        end_date = today + timedelta(days=7)
+
+        code = competitions[competition_name]
+        params = urlencode({
+            "dateFrom": today.isoformat(),
+            "dateTo": end_date.isoformat(),
+        })
+        url = (
+            f"https://api.football-data.org/v4/competitions/"
+            f"{code}/matches?{params}"
+        )
+
+        request = Request(
+            url,
+            headers={"X-Auth-Token": token},
+        )
+
+        try:
+            with st.spinner("Récupération des matchs..."):
+                with urlopen(request, timeout=20) as response:
+                    data = json.loads(response.read().decode("utf-8"))
+
+            matches = data.get("matches", [])
+
+            if not matches:
+                st.info(
+                    "Aucun match retourné pour cette compétition "
+                    "sur cette période. Essaie une autre compétition."
+                )
+            else:
+                st.success(f"{len(matches)} match(s) récupéré(s)")
+
+                status_labels = {
+                    "SCHEDULED": "À venir",
+                    "TIMED": "Programmé",
+                    "IN_PLAY": "En cours",
+                    "LIVE": "En direct",
+                    "PAUSED": "En pause",
+                    "FINISHED": "Terminé",
+                    "POSTPONED": "Reporté",
+                    "SUSPENDED": "Suspendu",
+                    "CANCELLED": "Annulé",
+                }
+
+                for match in matches:
+                    home = match.get("homeTeam", {}).get("name") or "Domicile"
+                    away = match.get("awayTeam", {}).get("name") or "Extérieur"
+                    score = match.get("score", {}).get("fullTime", {})
+                    home_goals = score.get("home")
+                    away_goals = score.get("away")
+
+                    if home_goals is None or away_goals is None:
+                        score_text = "Pas encore de score"
+                    else:
+                        score_text = f"{home_goals} – {away_goals}"
+
+                    date_text = match.get("utcDate", "")
+                    try:
+                        date_text = (
+                            datetime.fromisoformat(
+                                date_text.replace("Z", "+00:00")
+                            )
+                            .astimezone()
+                            .strftime("%d/%m/%Y à %H:%M")
+                        )
+                    except (ValueError, TypeError):
+                        date_text = "Date indisponible"
+
+                    status = status_labels.get(
+                        match.get("status", ""),
+                        match.get("status", "Inconnu"),
+                    )
+
+                    with st.container(border=True):
+                        st.caption(date_text)
+                        st.subheader(f"{home}  —  {away}")
+                        st.write(f"**Score :** {score_text}")
+                        st.write(f"**Statut :** {status}")
+
+        except HTTPError as error:
+            if error.code == 403:
+                st.error(
+                    "Accès refusé par l'API. Vérifie que ton offre "
+                    "autorise cette compétition."
+                )
+            elif error.code == 429:
+                st.error(
+                    "Limite de requêtes atteinte. Attends un peu "
+                    "avant de réessayer."
+                )
+            elif error.code == 400:
+                st.error(
+                    "La requête a été refusée. Vérifie la compétition "
+                    "choisie et réessaie."
+                )
+            else:
+                st.error(
+                    f"L'API a renvoyé une erreur HTTP {error.code}."
+                )
+        except URLError:
+            st.error(
+                "Connexion à l'API impossible. Réessaie dans quelques "
+                "instants."
+            )
+        except (ValueError, KeyError, TypeError):
+            st.error(
+                "La réponse de l'API n'a pas pu être lue correctement."
+            )
+
+st.divider()
+st.caption(
+    "Source : football-data.org. Les compétitions et données "
+    "disponibles dépendent de ton offre API. Les scores et statuts "
+    "ne garantissent pas une couverture en temps réel."
 )
-
-remaining = max(0, 90 - minute) / 90
-# Example baseline rates, adjusted slightly by shots on target; deliberately transparent.
-home_rate = remaining * (0.85 + min(home_sot, 8) * 0.10)
-away_rate = remaining * (0.70 + min(away_sot, 8) * 0.10)
-
-def poisson_prob(k, lam):
-    return math.exp(-lam) * (lam ** k) / math.factorial(k)
-
-def prob_at_least_one(lam):
-    return 1 - math.exp(-lam)
-
-p_home_goal = prob_at_least_one(home_rate)
-p_away_goal = prob_at_least_one(away_rate)
-p_any_goal = 1 - math.exp(-(home_rate + away_rate))
-
-m1, m2, m3 = st.columns(3)
-m1.metric("Score saisi", f"{home_goals} – {away_goals}")
-m2.metric("Au moins 1 but supplémentaire*", f"{p_any_goal:.0%}")
-m3.metric("But domicile supplémentaire*", f"{p_home_goal:.0%}")
-
-st.caption("*Estimations illustratives issues d'hypothèses de démonstration, non calibrées sur des données historiques.")
-
-st.subheader("3. Lecture descriptive des chiffres saisis")
-if home_sot + away_sot == 0:
-    st.info("Aucun tir cadré saisi. Il y a trop peu d'information pour interpréter la pression offensive.")
-elif home_sot > away_sot:
-    st.write(f"Dans les valeurs saisies, {home} a davantage de tirs cadrés ({home_sot} contre {away_sot}). Cela ne garantit pas un but.")
-elif away_sot > home_sot:
-    st.write(f"Dans les valeurs saisies, {away} a davantage de tirs cadrés ({away_sot} contre {home_sot}). Cela ne garantit pas un but.")
-else:
-    st.write("Les deux équipes ont le même nombre de tirs cadrés dans les valeurs saisies.")
-
-st.subheader("4. Prochaine amélioration")
-st.markdown(
-    "- Connecter une source de données football autorisée.\n"
-    "- Afficher la date et l'heure de la dernière mise à jour.\n"
-    "- Tester les estimations sur des matchs historiques avant de les utiliser.\n"
-    "- Comparer les probabilités aux cotes seulement lorsque des données fiables sont disponibles."
-)
-st.caption("Utilise ce prototype à des fins éducatives. Les paris comportent un risque de perte.")
