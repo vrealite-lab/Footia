@@ -59,7 +59,7 @@ selected_status = status_options[status_label]
 if selected_status:
     filters["status"] = selected_status
 
-params = urlencode(filters)
+        params = urlencode(filters)
         url = (
             f"https://api.football-data.org/v4/competitions/"
             f"{code}/matches?{params}"
