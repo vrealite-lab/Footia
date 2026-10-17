@@ -958,6 +958,9 @@ for i, pi in enumerate(baseline_ph):
                     "_eh": expected_home,
                     "_ea": expected_away,
                     "_probs": probabilities,
+                    "_baseline_h": baseline_home,
+"_baseline_a": baseline_away,
+"_baseline_probs": baseline_probs,
                     "_home_goals": match["hg"],
                     "_away_goals": match["ag"],
                     "_actual_class": (
@@ -1055,3 +1058,116 @@ if results:
     ]
 
     st.dataframe(display_results, use_container_width=True)
+
+# ============================================================
+# COMPARAISON FOOT IA VS MODELE DE REFERENCE
+# ============================================================
+
+st.divider()
+st.subheader("⚖️ Foot IA vs modèle de référence")
+
+if results and all("_baseline_probs" in r for r in results):
+
+    n = len(results)
+
+    # Erreur moyenne des buts du modèle de référence
+    baseline_mae = sum(
+        abs(r["_baseline_h"] - r["_home_goals"])
+        + abs(r["_baseline_a"] - r["_away_goals"])
+        for r in results
+    ) / (2 * n)
+
+    # Erreur quadratique moyenne de référence
+    baseline_rmse = math.sqrt(
+        sum(
+            (r["_baseline_h"] - r["_home_goals"]) ** 2
+            + (r["_baseline_a"] - r["_away_goals"]) ** 2
+            for r in results
+        ) / (2 * n)
+    )
+
+    # Score de Brier du modèle de référence
+    baseline_brier = sum(
+        sum(
+            (
+                r["_baseline_probs"][i]
+                - (1 if i == r["_actual_class"] else 0)
+            ) ** 2
+            for i in range(3)
+        )
+        for r in results
+    ) / n
+
+    # Taux de résultats correctement prédits par la référence
+    labels = ["Domicile", "Nul", "Extérieur"]
+
+    baseline_correct = sum(
+        labels[r["_baseline_probs"].index(
+            max(r["_baseline_probs"])
+        )] == r["Résultat réel"]
+        for r in results
+    ) / n * 100
+
+    comparison_rows = [
+        {
+            "Indicateur": "MAE des buts",
+            "Foot IA": round(mae, 3),
+            "Référence": round(baseline_mae, 3),
+            "Meilleur modèle": (
+                "Foot IA" if mae < baseline_mae
+                else "Référence" if baseline_mae < mae
+                else "Égalité"
+            ),
+        },
+        {
+            "Indicateur": "RMSE des buts",
+            "Foot IA": round(rmse, 3),
+            "Référence": round(baseline_rmse, 3),
+            "Meilleur modèle": (
+                "Foot IA" if rmse < baseline_rmse
+                else "Référence" if baseline_rmse < rmse
+                else "Égalité"
+            ),
+        },
+        {
+            "Indicateur": "Score de Brier",
+            "Foot IA": round(brier, 3),
+            "Référence": round(baseline_brier, 3),
+            "Meilleur modèle": (
+                "Foot IA" if brier < baseline_brier
+                else "Référence" if baseline_brier < brier
+                else "Égalité"
+            ),
+        },
+        {
+            "Indicateur": "Résultats corrects (%)",
+            "Foot IA": round(correct / n * 100, 1),
+            "Référence": round(baseline_correct, 1),
+            "Meilleur modèle": (
+                "Foot IA"
+                if correct / n * 100 > baseline_correct
+                else "Référence"
+                if baseline_correct > correct / n * 100
+                else "Égalité"
+            ),
+        },
+    ]
+
+    st.dataframe(
+        comparison_rows,
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    st.caption(
+        "Pour la MAE, la RMSE et le Brier, le score le plus bas "
+        "est préférable. Pour le taux de résultats corrects, "
+        "le taux le plus élevé est préférable."
+    )
+
+else:
+    st.info(
+        "Relance le backtesting pour calculer la comparaison. "
+        "Les anciennes prédictions ne contiennent pas encore "
+        "les données du modèle de référence."
+    )
