@@ -23,7 +23,16 @@ competition_name = st.selectbox(
     "Choisis une compétition",
     list(competitions.keys()),
 )
-
+status_options = {
+    "Tous les matchs": "",
+    "En cours": "IN_PLAY",
+    "À venir": "SCHEDULED",
+    "Terminés": "FINISHED",
+}
+status_label = st.selectbox(
+    "Filtrer par statut",
+    list(status_options.keys()),
+)
 if st.button("🔄 Charger les matchs", use_container_width=True):
     st.session_state["load_matches"] = True
 
@@ -40,10 +49,17 @@ if st.session_state.get("load_matches", False):
         end_date = today + timedelta(days=7)
 
         code = competitions[competition_name]
-        params = urlencode({
-            "dateFrom": today.isoformat(),
-            "dateTo": end_date.isoformat(),
-        })
+        filters = {
+    "dateFrom": today.isoformat(),
+    "dateTo": end_date.isoformat(),
+}
+
+selected_status = status_options[status_label]
+
+if selected_status:
+    filters["status"] = selected_status
+
+params = urlencode(filters)
         url = (
             f"https://api.football-data.org/v4/competitions/"
             f"{code}/matches?{params}"
