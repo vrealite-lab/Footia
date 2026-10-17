@@ -919,17 +919,17 @@ if st.button("▶️ Lancer le backtesting Premier League", key="run_backtest_pl
                 baseline_pa = poisson_probs(baseline_away)
 
                 baseline_probs = [0.0, 0.0, 0.0]
-                
-for i, pi in enumerate(baseline_ph):
-    for j, pj in enumerate(baseline_pa):
-        probability = pi * pj
 
-        if i > j:
-            baseline_probs[0] += probability
-        elif i == j:
-            baseline_probs[1] += probability
-        else:
-            baseline_probs[2] += probability
+                for i, pi in enumerate(baseline_ph):
+                    for j, pj in enumerate(baseline_pa):
+                        probability = pi * pj
+
+                        if i > j:
+                            baseline_probs[0] += probability
+                        elif i == j:
+                            baseline_probs[1] += probability
+                        else:
+                            baseline_probs[2] += probability
 
                 probabilities = [p_home, p_draw, p_away]
                 labels = ["Domicile", "Nul", "Extérieur"]
