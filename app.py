@@ -57,19 +57,26 @@ if st.session_state.get("load_matches", False):
 selected_status = status_options[status_label]
 
 if selected_status:
-    filters["status"] = selected_status
+        filters = {
+            "dateFrom": today.isoformat(),
+            "dateTo": end_date.isoformat(),
+        }
+
+        selected_status = status_options[status_label]
+
+        if selected_status:
+            filters["status"] = selected_status
 
         params = urlencode(filters)
+
         url = (
             f"https://api.football-data.org/v4/competitions/"
             f"{code}/matches?{params}"
         )
-
         request = Request(
             url,
             headers={"X-Auth-Token": token},
         )
-
         try:
             with st.spinner("Récupération des matchs..."):
                 with urlopen(request, timeout=20) as response:
