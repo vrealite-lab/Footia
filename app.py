@@ -521,3 +521,224 @@ if st.button("Analyser les équipes", use_container_width=True):
             st.error("Connexion à l'API impossible. Réessaie plus tard.")
         except (ValueError, KeyError, TypeError):
             st.error("Impossible de lire les données reçues.")
+st.divider()
+st.header("⚔️ Comparateur avant-match")
+
+st.write(
+    "Compare une équipe à domicile et une équipe à l'extérieur "
+    "à partir des résultats historiques de la compétition."
+)
+
+if st.button("🔄 Charger les données de comparaison"):
+    token = st.secrets.get("FOOTBALL_DATA_TOKEN", "")
+
+    if not token:
+        st.error("Token API introuvable dans les Secrets.")
+    else:
+        today = datetime.now(timezone.utc).date()
+        date_from = today - timedelta(days=90)
+        date_to = today + timedelta(days=1)
+        code = competitions[competition_name]
+
+        params = urlencode({
+            "status": "FINISHED",
+            "dateFrom": date_from.isoformat(),
+            "dateTo": date_to.isoformat(),
+        })
+
+        url = (
+            f"https://api.football-data.org/v4/competitions/"
+            f"{code}/matches?{params}"
+        )
+
+        request = Request(
+            url,
+            headers={"X-Auth-Token": token},
+        )
+
+        try:
+            with st.spinner("Préparation des statistiques..."):
+                with urlopen(request, timeout=20) as response:
+                    data = json.loads(
+                        response.read().decode("utf-8")
+                    )
+
+            teams = {}
+
+            for match in data.get("matches", []):
+                if match.get("status") != "FINISHED":
+                    continue
+
+                home_name = match.get("homeTeam", {}).get("name")
+                away_name = match.get("awayTeam", {}).get("name")
+                score = match.get("score", {}).get("fullTime", {})
+                hg = score.get("home")
+                ag = score.get("away")
+
+                if not home_name or not away_name:
+                    continue
+                if not isinstance(hg, int) or not isinstance(ag, int):
+                    continue
+
+                if home_name not in teams:
+                    teams[home_name] = {
+                        "home_n": 0, "home_for": 0, "home_against": 0,
+                        "away_n": 0, "away_for": 0, "away_against": 0,
+                        "all_n": 0, "all_for": 0, "all_against": 0,
+                    }
+
+                if away_name not in teams:
+                    teams[away_name] = {
+                        "home_n": 0, "home_for": 0, "home_against": 0,
+                        "away_n": 0, "away_for": 0, "away_against": 0,
+                        "all_n": 0, "all_for": 0, "all_against": 0,
+                    }
+
+                h = teams[home_name]
+                a = teams[away_name]
+
+                h["home_n"] += 1
+                h["home_for"] += hg
+                h["home_against"] += ag
+
+                a["away_n"] += 1
+                a["away_for"] += ag
+                a["away_against"] += hg
+
+                h["all_n"] += 1
+                h["all_for"] += hg
+                h["all_against"] += ag
+
+                a["all_n"] += 1
+                a["all_for"] += ag
+                a["all_against"] += hg
+
+            st.session_state["comparison_data"] = {
+                "competition": competition_name,
+                "teams": teams,
+            }
+
+            if teams:
+                st.success(
+                    f"Données chargées pour {len(teams)} équipes."
+                )
+            else:
+                st.warning("Aucun résultat historique exploitable.")
+
+        except HTTPError as error:
+            st.error(f"Erreur API HTTP {error.code}.")
+        except URLError:
+            st.error("Connexion à l'API impossible. Réessaie plus tard.")
+        except (ValueError, KeyError, TypeError):
+            st.error("Impossible de lire les données reçues.")
+
+comparison = st.session_state.get("comparison_data")
+
+if comparison:
+    if comparison["competition"] != competition_name:
+        st.warning(
+            "Tu as changé de compétition. Recharge les données "
+            "pour comparer les équipes de la nouvelle compétition."
+        )
+    else:
+        teams = comparison["teams"]
+        names = sorted(teams.keys())
+
+        if len(names) >= 2:
+            home_name = st.selectbox(
+                "Équipe à domicile",
+                names,
+                key="compare_home",
+            )
+
+            away_names = [name for name in names if name != home_name]
+
+            away_name = st.selectbox(
+                "Équipe à l'extérieur",
+                away_names,
+                key="compare_away",
+            )
+
+            if st.button("📊 Comparer les équipes"):
+                home = teams[home_name]
+                away = teams[away_name]
+
+                st.subheader(f"{home_name} vs {away_name}")
+
+                c1, c2 = st.columns(2)
+
+                c1.metric(
+                    f"{home_name} — buts marqués à domicile",
+                    f"{home['home_for'] / home['home_n']:.2f}"
+                    if home["home_n"] else "Données insuffisantes",
+                )
+
+                c2.metric(
+                    f"{away_name} — buts marqués à l'extérieur",
+                    f"{away['away_for'] / away['away_n']:.2f}"
+                    if away["away_n"] else "Données insuffisantes",
+                )
+
+                c1, c2 = st.columns(2)
+
+                c1.metric(
+                    f"{home_name} — buts encaissés à domicile",
+                    f"{home['home_against'] / home['home_n']:.2f}"
+                    if home["home_n"] else "Données insuffisantes",
+                )
+
+                c2.metric(
+                    f"{away_name} — buts encaissés à l'extérieur",
+                    f"{away['away_against'] / away['away_n']:.2f}"
+                    if away["away_n"] else "Données insuffisantes",
+                )
+
+                if home["home_n"] and away["away_n"]:
+                    expected_home = (
+                        home["home_for"] / home["home_n"]
+                        + away["away_against"] / away["away_n"]
+                    ) / 2
+
+                    expected_away = (
+                        away["away_for"] / away["away_n"]
+                        + home["home_against"] / home["home_n"]
+                    ) / 2
+
+                    st.markdown("### ⚽ Indication expérimentale")
+
+                    c1, c2 = st.columns(2)
+
+                    c1.metric(
+                        "Buts indicatifs — domicile",
+                        f"{expected_home:.2f}",
+                    )
+
+                    c2.metric(
+                        "Buts indicatifs — extérieur",
+                        f"{expected_away:.2f}",
+                    )
+
+                    st.write(
+                        f"Total indicatif : "
+                        f"{expected_home + expected_away:.2f} buts."
+                    )
+
+                    st.caption(
+                        "Calcul exploratoire : moyenne entre l'attaque "
+                        "d'une équipe dans ce contexte et les buts "
+                        "encaissés par son adversaire dans le contexte "
+                        "opposé. Ce n'est pas un modèle prédictif validé."
+                    )
+
+                    if home["home_n"] < 5 or away["away_n"] < 5:
+                        st.warning(
+                            "Au moins une équipe a moins de 5 matchs "
+                            "dans son contexte. Les moyennes sont fragiles."
+                        )
+                else:
+                    st.warning(
+                        "Il manque des matchs à domicile ou à l'extérieur "
+                        "pour calculer les indications."
+                    )
+        else:
+            st.info("Il faut au moins deux équipes avec des données.")
