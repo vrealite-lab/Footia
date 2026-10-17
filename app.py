@@ -138,7 +138,23 @@ if selected_status:
                         st.subheader(f"{home}  —  {away}")
                         st.write(f"**Score :** {score_text}")
                         st.write(f"**Statut :** {status}")
+                    if home_goals is not None and away_goals is not None:
+                        total_goals = home_goals + away_goals
 
+                        st.metric("Total de buts", total_goals)
+
+                        if home_goals > away_goals:
+                            st.write("📊 Lecture du score : avantage domicile")
+                        elif away_goals > home_goals:
+                            st.write("📊 Lecture du score : avantage extérieur")
+                        else:
+                            st.write("📊 Lecture du score : égalité")
+
+                    else:
+                        st.info(
+                            "Analyse limitée : le score complet "
+                            "n'est pas encore disponible."
+                        )
         except HTTPError as error:
             if error.code == 403:
                 st.error(
