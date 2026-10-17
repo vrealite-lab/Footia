@@ -306,3 +306,218 @@ if st.button("Calculer les moyennes historiques"):
             st.error("Connexion à l'API impossible. Réessaie plus tard.")
         except (ValueError, KeyError, TypeError):
             st.error("Impossible de lire les données reçues.")
+st.divider()
+st.header("🧠 Analyse individuelle des équipes")
+
+st.write(
+    "Compare les performances de chaque équipe à domicile "
+    "et à l'extérieur à partir des matchs terminés."
+)
+
+if st.button("Analyser les équipes", use_container_width=True):
+    token = st.secrets.get("FOOTBALL_DATA_TOKEN", "")
+
+    if not token:
+        st.error("Token API introuvable dans les Secrets.")
+    else:
+        today = datetime.now(timezone.utc).date()
+        date_from = today - timedelta(days=90)
+        date_to = today + timedelta(days=1)
+        code = competitions[competition_name]
+
+        params = urlencode({
+            "status": "FINISHED",
+            "dateFrom": date_from.isoformat(),
+            "dateTo": date_to.isoformat(),
+        })
+
+        url = (
+            f"https://api.football-data.org/v4/competitions/"
+            f"{code}/matches?{params}"
+        )
+
+        request = Request(
+            url,
+            headers={"X-Auth-Token": token},
+        )
+
+        try:
+            with st.spinner("Analyse des équipes..."):
+                with urlopen(request, timeout=20) as response:
+                    data = json.loads(
+                        response.read().decode("utf-8")
+                    )
+
+            teams = {}
+            valid_matches = 0
+
+            for match in data.get("matches", []):
+                if match.get("status") != "FINISHED":
+                    continue
+
+                home_team = match.get("homeTeam", {}).get("name")
+                away_team = match.get("awayTeam", {}).get("name")
+                score = match.get("score", {}).get("fullTime", {})
+                home_goals = score.get("home")
+                away_goals = score.get("away")
+
+                if not home_team or not away_team:
+                    continue
+
+                if not isinstance(home_goals, int):
+                    continue
+
+                if not isinstance(away_goals, int):
+                    continue
+
+                valid_matches += 1
+
+                if home_team not in teams:
+                    teams[home_team] = {
+                        "matches": 0,
+                        "scored": 0,
+                        "conceded": 0,
+                        "home_matches": 0,
+                        "home_scored": 0,
+                        "home_conceded": 0,
+                        "away_matches": 0,
+                        "away_scored": 0,
+                        "away_conceded": 0,
+                    }
+
+                if away_team not in teams:
+                    teams[away_team] = {
+                        "matches": 0,
+                        "scored": 0,
+                        "conceded": 0,
+                        "home_matches": 0,
+                        "home_scored": 0,
+                        "home_conceded": 0,
+                        "away_matches": 0,
+                        "away_scored": 0,
+                        "away_conceded": 0,
+                    }
+
+                home = teams[home_team]
+                away = teams[away_team]
+
+                home["matches"] += 1
+                home["scored"] += home_goals
+                home["conceded"] += away_goals
+                home["home_matches"] += 1
+                home["home_scored"] += home_goals
+                home["home_conceded"] += away_goals
+
+                away["matches"] += 1
+                away["scored"] += away_goals
+                away["conceded"] += home_goals
+                away["away_matches"] += 1
+                away["away_scored"] += away_goals
+                away["away_conceded"] += home_goals
+
+            if not teams:
+                st.warning(
+                    "Aucune donnée exploitable sur cette période."
+                )
+            else:
+                st.success(
+                    f"{valid_matches} matchs terminés analysés."
+                )
+
+                team_name = st.selectbox(
+                    "Choisis une équipe",
+                    sorted(teams.keys()),
+                    key="team_analysis_select",
+                )
+
+                stats = teams[team_name]
+                count = stats["matches"]
+
+                avg_scored = stats["scored"] / count
+                avg_conceded = stats["conceded"] / count
+
+                st.subheader(team_name)
+                st.caption(
+                    f"{count} match(s) dans l'échantillon "
+                    f"des 90 derniers jours environ."
+                )
+
+                col1, col2 = st.columns(2)
+                col1.metric(
+                    "Buts marqués / match",
+                    f"{avg_scored:.2f}",
+                )
+                col2.metric(
+                    "Buts encaissés / match",
+                    f"{avg_conceded:.2f}",
+                )
+
+                st.markdown("#### 🏠 À domicile")
+                if stats["home_matches"] > 0:
+                    n = stats["home_matches"]
+                    c1, c2 = st.columns(2)
+                    c1.metric(
+                        "Buts marqués",
+                        f"{stats['home_scored'] / n:.2f}",
+                    )
+                    c2.metric(
+                        "Buts encaissés",
+                        f"{stats['home_conceded'] / n:.2f}",
+                    )
+                    st.caption(f"Basé sur {n} match(s) à domicile.")
+                else:
+                    st.info("Aucun match à domicile dans l'échantillon.")
+
+                st.markdown("#### ✈️ À l'extérieur")
+                if stats["away_matches"] > 0:
+                    n = stats["away_matches"]
+                    c1, c2 = st.columns(2)
+                    c1.metric(
+                        "Buts marqués",
+                        f"{stats['away_scored'] / n:.2f}",
+                    )
+                    c2.metric(
+                        "Buts encaissés",
+                        f"{stats['away_conceded'] / n:.2f}",
+                    )
+                    st.caption(f"Basé sur {n} match(s) à l'extérieur.")
+                else:
+                    st.info(
+                        "Aucun match à l'extérieur dans l'échantillon."
+                    )
+
+                st.markdown("#### 📋 Lecture statistique")
+
+                if count < 5:
+                    st.warning(
+                        "Échantillon très limité : moins de 5 matchs. "
+                        "Les moyennes sont peu stables."
+                    )
+                elif count < 10:
+                    st.info(
+                        "Échantillon encore limité. "
+                        "Interprète les moyennes avec prudence."
+                    )
+                else:
+                    st.write(
+                        "L'échantillon est plus fourni, mais "
+                        "les moyennes restent descriptives et "
+                        "ne garantissent pas les performances futures."
+                    )
+
+                st.caption(
+                    "Source : football-data.org. Les chiffres décrivent "
+                    "les matchs retournés par l'API pour la compétition "
+                    "choisie et la période sélectionnée. Ils ne constituent "
+                    "pas à eux seuls une prédiction."
+                )
+
+        except HTTPError as error:
+            st.error(
+                f"Erreur API HTTP {error.code}. "
+                "Vérifie les droits d'accès et réessaie."
+            )
+        except URLError:
+            st.error("Connexion à l'API impossible. Réessaie plus tard.")
+        except (ValueError, KeyError, TypeError):
+            st.error("Impossible de lire les données reçues.")
